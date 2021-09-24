@@ -13,8 +13,10 @@ body {
 }
 .page {
   position: relative;
+  /*
   width: 210mm;
   min-height: 300mm;
+  */
   padding: 0mm;
   margin: 10mm auto;
   border-radius: 5px;
@@ -170,6 +172,14 @@ li {
   display: inline-block;
   margin-right: 5px;
 }
+
+.centered-table{
+  position: relative;
+  margin-right: 50px;
+  margin-left: 50px;
+  display: inline-block;
+  margin-bottom: 20px;
+}
 .full-view-link {
   background-color:#3b3b86;
   color: white !important;
@@ -211,7 +221,13 @@ li {
 }
 
 .logo {
-  height: 100px;
+  height: 30px;
+  width: auto;
+  margin: 10px 10px;
+}
+
+.logo-interclub {
+  height: 150px;
   width: auto;
   margin: 10px 10px;
 }
@@ -349,7 +365,7 @@ a:active {
     width: auto;
   }
   .logo {
-    height: 20px;
+    height: 5px;
     width: auto;
   }
   #learn-more-button {

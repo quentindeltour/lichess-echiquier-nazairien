@@ -1,27 +1,29 @@
-from datetime import date, timedelta, datetime
-import os
+from datetime import timedelta, datetime
 import re
 import dateutil.parser
 import locale
 from dateutil.relativedelta import relativedelta
-from io import StringIO
+import os
+import base64
 
 import dash
 import dash_core_components as dcc
 import dash_html_components as html
 from dash.dependencies import Input, Output, State
 import dash_table
+import dash_bootstrap_components as dbc
 
 import pandas as pd
 import plotly.express as px
 import ndjson
 
-from utils import create_lichess_session, get, Header, update_club_informations, update_global_tournament_ranking, update_players_list, update_tournament_list, update_tables_club_puzzle, filter_list_between_strings
-from utils_s3 import create_s3_object, read_s3_csv_file, get_list_s3_objects
+from utils import create_lichess_session, get, Header, update_club_informations, update_players_list, update_tournament_list, update_team_arena_list
+#from utils_s3 import create_s3_object, read_s3_csv_file, get_list_s3_objects
 
-from controls import GAME_MODE
+from controls import GAME_MODE, TOURNOIS, CATEGORIES_DROPDOWN, FAMILLES, CATEGORIES, ID_NOM, TEAMS_ID
 
 locale.setlocale(locale.LC_TIME, 'fr_FR')
+pd.options.mode.chained_assignment = None
 
 external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
 
@@ -33,15 +35,30 @@ client = create_lichess_session()
 name, description, president, nbmembers, ville = update_club_informations(club)
 liste_joueurs, players_options, player_value = update_players_list(club)
 tournament_options, tournament_value = update_tournament_list(club)
-data_table_général, columns_table_général = update_global_tournament_ranking(club)
+
+team_arena_options, team_arena_value = update_team_arena_list(club)
+
+#data_table_général, columns_table_général = update_global_tournament_ranking(club)
 
 #OPTIONS
 game_mode_options =[
     {"label": str(value), "value": str(key)} for key, value in GAME_MODE.items()
 ]
 
+tournois_options = [
+    {"label": str(value), "value": str(key)} for key, value in TOURNOIS.items()
+]
+
+categories_options = [
+    {"label": str(value), "value": str(key)} if key not in ['Elo', 'Age'] else {"label": str(value), "value": str(key), 'disabled':True} for key, value in CATEGORIES_DROPDOWN.items()
+]
+
 app = dash.Dash(
-    __name__, meta_tags=[{"name": "viewport", "content": "width=device-width"}]
+    __name__, 
+    title='Echiquier Nazairien',
+    update_title='En cours de chargement...',
+    meta_tags=[{"name": "viewport", "content": "width=device-width"},],
+    external_stylesheets=[dbc.themes.FLATLY]
 )
 
 app.config['suppress_callback_exceptions'] = True
@@ -87,7 +104,7 @@ overview_layout = html.Div(
                                         html.P("Président : "), html.H6(president), 
                                     ],
                                     id="cadence",
-                                    style={'width': '20%', 'float': 'center','display': 'inline-block'},
+                                    style={'width': '23%', 'float': 'center','display': 'inline-block'},
                                     className="product ",
                                 ),
                                 html.Div(
@@ -127,7 +144,7 @@ overview_layout = html.Div(
                         dcc.Dropdown(
                             id='game_mode_club',
                             options=game_mode_options,
-                            value='bullet',
+                            value='blitz',
                             clearable=False
                         ),
                         html.Div(
@@ -142,6 +159,16 @@ overview_layout = html.Div(
                                             page_action="native",
                                             page_current= 0,
                                             page_size=15,
+                                            style_data_conditional=[
+                                                {
+                                                    'if': {'row_index': 'odd'},
+                                                    'backgroundColor': 'rgb(248, 248, 248)'
+                                                }
+                                            ],
+                                            style_header={
+                                                'backgroundColor': 'rgb(230, 230, 230)',
+                                                'fontWeight': 'bold'
+                                            },
                                         )
                                     ]
                                 ),
@@ -168,10 +195,11 @@ def update_tables_club(game_mode):
     rep = get("https://lichess.org/api/team/{}/users".format(str(club)))
     items = rep.json(cls=ndjson.Decoder)
     df = pd.json_normalize(items)
-    df_table = df[['username', 'perfs.{}.games'.format(game_mode), 'perfs.{}.rating'.format(game_mode), 'perfs.{}.prog'.format(game_mode)]]
+    df_table = df[['username', 'id', 'perfs.{}.games'.format(game_mode), 'perfs.{}.rating'.format(game_mode), 'perfs.{}.prog'.format(game_mode)]]
+    df_table['Nom'] = df_table['id'].apply(lambda x:ID_NOM.get(str(x), "inconnu"))
     data_table = df_table.sort_values('perfs.{}.rating'.format(game_mode), ascending=False).to_dict('records')
     columns_table=[
-        {"name": 'Joueur', "id": 'username'}, {'name':'Nombre de parties', 'id':'perfs.{}.games'.format(game_mode)},
+        {"name": 'Joueur', "id": 'username'},{"name": 'Nom', "id": 'Nom'}, {'name':'Nombre de parties', 'id':'perfs.{}.games'.format(game_mode)},
         {'name':'Classement Elo', 'id':'perfs.{}.rating'.format(game_mode)}, {'name':'Progression', 'id':'perfs.{}.prog'.format(game_mode)}
     ]
     return data_table,columns_table
@@ -209,10 +237,10 @@ individual_layout = html.Div(
                 html.Br(),
                 dcc.Graph(id='indicator-graphic'),
             ],
-            className="sub_pagetwo",
+            className="sub_page",
         ),
     ],
-    className="pagetwo",
+    className="page",
 )
 
 @app.callback(
@@ -383,6 +411,16 @@ tournament_layout = html.Div(
                                                     page_action="native",
                                                     page_current= 0,
                                                     page_size=20,
+                                                    style_data_conditional=[
+                                                        {
+                                                            'if': {'row_index': 'odd'},
+                                                            'backgroundColor': 'rgb(248, 248, 248)'
+                                                        }
+                                                    ],
+                                                    style_header={
+                                                        'backgroundColor': 'rgb(230, 230, 230)',
+                                                        'fontWeight': 'bold'
+                                                    },
                                                 )
                                             ]
                                         ),
@@ -446,14 +484,40 @@ def update_tournament_results(tourn_id):
     lines = [line for line in rep.text.splitlines()]
     list_df = [re.split('[ ]{2,}', string_) for string_ in lines if string_.startswith('001')]
     df = pd.DataFrame(list_df)
+    df[4]=df[4].astype(float)
     df_table = df[[2, 3, 4]].sort_values(by=4, ascending=False)
-    df_table.columns = ['Nom du Joueur', 'Classement Elo', 'Nombre de Points']
+    df_table.columns = ['Pseudo', 'Classement Elo', 'Nombre de Points']
+    df_table['Nom du Joueur'] = df_table['Pseudo'].apply(lambda x:ID_NOM.get(str(x), "inconnu"))
     df_table['Classement'] = range(1,len(df_table)+1,1)
     data_table = df_table.to_dict('records')
-    columns_table=[{'name': col, 'id': col} for col in ['Classement','Nom du Joueur', 'Classement Elo', 'Nombre de Points']]
+    columns_table=[{'name': col, 'id': col} for col in ['Classement','Pseudo','Nom du Joueur', 'Classement Elo', 'Nombre de Points']]
     return data_table,columns_table
 
 #General Tournament Page
+
+dropdown = dbc.DropdownMenu(
+    [   
+        dbc.DropdownMenuItem("Classement par catégories Elo", header=True) ,
+        dbc.DropdownMenuItem("Plus de 1800", id='1800+'),
+        dbc.DropdownMenuItem("Entre 1500 et 1800", id='1500-1800'),
+        dbc.DropdownMenuItem("Entre 1300 et 1500", id='1300-1500'),
+        dbc.DropdownMenuItem("Entre 1100 et 1300", id='1100-1300'),
+        dbc.DropdownMenuItem("Moins de 1100", id='1100-'),
+        dbc.DropdownMenuItem(divider=True),
+        dbc.DropdownMenuItem("Classement par catégories d'âge", header=True),
+        dbc.DropdownMenuItem("Veteran", id='Veteran'),
+        dbc.DropdownMenuItem("Senior +", id='Senior+'),
+        dbc.DropdownMenuItem("Senior", id='Senior'),
+        dbc.DropdownMenuItem("Cadet/Junior", id='Cadet'),            
+        dbc.DropdownMenuItem("Minime", id='Minime'),
+        dbc.DropdownMenuItem("Benjamin", id='Benjamin'),            
+        dbc.DropdownMenuItem("Pupille", id='Pupille'),
+        dbc.DropdownMenuItem("Poussin", id='Poussin'),            
+        dbc.DropdownMenuItem("Petit Poussin", id='Petit Poussin'),
+    ],
+    label="Choix des catégories",
+)
+
 
 tournament_general_layout = html.Div(
     [
@@ -461,24 +525,104 @@ tournament_general_layout = html.Div(
         html.Br(),
         html.Div(
             [
-                html.Div(
-                    html.H4("Classement Général des Tournois", className='subtitle'
-
-                    ),
+                dcc.Dropdown(
+                    id='type-tournoi',
+                    options=tournois_options,
+                    value='2021',
+                    clearable=False
                 ),
-                html.Div( 
+                html.Br(),
+                html.Div(id='classement-tournois-catégories'),
+                html.Div(
                     [
-                        dash_table.DataTable(
-                            id='table_global_tournoi',
-                            data=data_table_général,
-                            columns=columns_table_général,
-                            sort_action='native',
-                            page_action="native",
-                            page_current= 0,
-                            page_size=30,
+                        dcc.Tabs(
+                            [
+                                dcc.Tab(
+                                    [
+                                        dash_table.DataTable(
+                                            id='table_global_tournoi',
+                                            sort_action='native',
+                                            page_action="native",
+                                            page_current= 0,
+                                            page_size=30,
+                                            style_data_conditional=[
+                                                {
+                                                    'if': {'row_index': 'odd'},
+                                                    'backgroundColor': 'rgb(248, 248, 248)'
+                                                }
+                                            ],
+                                            style_header={
+                                                'backgroundColor': 'rgb(230, 230, 230)',
+                                                'fontWeight': 'bold'
+                                            },
+                                        ), 
+                                    ],
+                                    label="Classement Général",
+                                    #tab_id="tab-1",
+                                    #tabClassName="ml-auto"
+                                ), 
+                                dcc.Tab(
+                                    [
+                                        dash_table.DataTable(
+                                            id='table_global_familles',
+                                            sort_action='native',
+                                            page_action="native",
+                                            page_current= 0,
+                                            page_size=30,
+                                            style_data_conditional=[
+                                                {
+                                                    'if': {'row_index': 'odd'},
+                                                    'backgroundColor': 'rgb(248, 248, 248)'
+                                                }
+                                            ],
+                                            style_header={
+                                                'backgroundColor': 'rgb(230, 230, 230)',
+                                                'fontWeight': 'bold'
+                                            },
+                                        ), 
+                                    ],
+                                    label="Classement des familles",
+                                    #tab_id='tab-2',
+                                    #tabClassName="ml-auto"
+                                ),
+                                    
+                                dcc.Tab(
+                                    [
+                                        dcc.Dropdown(
+                                            id='categorie',
+                                            options=categories_options,
+                                            value='Senior',
+                                            clearable=False
+                                        ),
+                                        dash_table.DataTable(
+                                            id='table_global_categories',
+                                            sort_action='native',
+                                            page_action="native",
+                                            page_current= 0,
+                                            page_size=30,
+                                            style_data_conditional=[
+                                                {
+                                                    'if': {'row_index': 'odd'},
+                                                    'backgroundColor': 'rgb(248, 248, 248)'
+                                                }
+                                            ],
+                                            style_header={
+                                                'backgroundColor': 'rgb(230, 230, 230)',
+                                                'fontWeight': 'bold'
+                                            },
+                                        ), 
+                                    ],
+                                    label="Classement par catégories",
+                                    #tab_id='tab-3',
+                                    #tabClassName="ml-auto"
+                                )
+                            ], 
+                            id='tab-classement',
+                            #active_tab='tab-1'
                         )
-                    ]
-                )
+                    ],
+                    className='table-custom'
+                ),
             ],
             className="sub_page",
             style={"margin-bottom": "25px"},
@@ -487,156 +631,318 @@ tournament_general_layout = html.Div(
     className='page'
 )
 
-# Puzzle Challenge Page
-today = date.today()
+@app.callback(
+    [Output('table_global_tournoi', 'data'), Output('table_global_tournoi', 'columns'),
+     Output('table_global_familles', 'data'), Output('table_global_familles', 'columns'),
+     Output('table_global_categories', 'data'), Output('table_global_categories', 'columns'),
+     ],
+    [Input('type-tournoi', 'value'), Input('categorie', 'value')]
+)
+def update_classement_general(type_tournoi, categorie):
+    rep = get('https://lichess.org/api/team/{}/swiss'.format(club))
+    items = rep.json(cls=ndjson.Decoder)
+    df = pd.json_normalize(items)
+    df_list = []
+    if type_tournoi == 'ete':
+        for id_tourn in df[df.startsAt < "2020-08-31"].id:
+            rep = get("https://lichess.org/swiss/{}.trf".format(str(id_tourn)))
+            lines = [line for line in rep.text.splitlines()]
+            list_df = [re.split('[ ]{2,}', string_) for string_ in lines if string_.startswith('001')]
+            df_list.append(pd.DataFrame(list_df))
+    elif type_tournoi=='confinement2':
+        for id_tourn in df[(df.startsAt >= "2020-10-28")&(df.startsAt < "2020-12-31") & (df.status=='finished')].id:
+            rep = get("https://lichess.org/swiss/{}.trf".format(str(id_tourn)))
+            lines = [line for line in rep.text.splitlines()]
+            list_df = [re.split('[ ]{2,}', string_) for string_ in lines if string_.startswith('001')]
+            df_list.append(pd.DataFrame(list_df))
+    elif type_tournoi=='2021':
+        for id_tourn in df[(df.startsAt >= "2021-01-01") & (df.status=='finished')].id:
+            rep = get("https://lichess.org/swiss/{}.trf".format(str(id_tourn)))
+            lines = [line for line in rep.text.splitlines()]
+            list_df = [re.split('[ ]{2,}', string_) for string_ in lines if string_.startswith('001')]
+            df_list.append(pd.DataFrame(list_df))
+    else:    
+        for id_tourn in df.id:
+            rep = get("https://lichess.org/swiss/{}.trf".format(str(id_tourn)))
+            lines = [line for line in rep.text.splitlines()]
+            list_df = [re.split('[ ]{2,}', string_) for string_ in lines if string_.startswith('001')]
+            df_list.append(pd.DataFrame(list_df))
+    df_final = pd.concat(df_list)
+    df_final[4] = df_final[4].astype(float)
+    gb = df_final.groupby(2)
+    df_table = pd.DataFrame(gb[4].sum()).merge(pd.DataFrame(gb[4].count()), left_index=True, right_index=True)
+    df_table['Pseudo'] = df_table.index
+    df_table['Nom du Joueur'] = df_table['Pseudo'].apply(lambda x:ID_NOM.get(str(x), "inconnu"))
+    df_table.rename(columns={'4_x':'Score total', '4_y':'Nombre de tournois joués'}, inplace=True)
+    df_table.sort_values('Score total', ascending=False, inplace=True)
+    df_table['Classement Général'] = range(1,len(df_table)+1,1)
 
-date_puzzle_options = [
-    {'label': dateutil.parser.parse(re.sub('-puzzle.csv', '', file)).strftime("%A %d %B %Y"), 'value':re.sub('-puzzle.csv', '', file)} for file in get_list_s3_objects()
-]
+    dic_resultats = {key: df_table.loc[df_table.Pseudo.isin(value)]['Score total'].sum() for key, value in FAMILLES.items()}
+    df_famille = pd.DataFrame.from_dict(dic_resultats, orient='index', columns=['Score total'])
+    df_famille['Nom'] = df_famille.index
+    df_famille['Membres'] = [','.join(liste) for liste in FAMILLES.values()]
+    df_famille['Classement'] = range(1,len(df_famille)+1,1)
 
-date_puzzle_value_first = '2020-10-23'
-date_puzzle_value_last = '{}-{}-{}'.format(today.year, today.month, today.day)
+    final_categories = {
+    '1800+':[x for x in df_table.index if x in CATEGORIES.get('1800+')],
+    '1500-1800':[x for x in df_table.index if x in CATEGORIES.get('1500-1800')],
+    '1300-1500':[x for x in df_table.index if x in CATEGORIES.get('1300-1500')],
+    '1100-1300':[x for x in df_table.index if x in CATEGORIES.get('1100-1300')],
+    '1100-':[x for x in df_table.index if x in CATEGORIES.get('1100-')],
+    'Veteran':[x for x in df_table.index if x in CATEGORIES.get('Veteran')],
+    'Senior+':[x for x in df_table.index if x in CATEGORIES.get('Senior+')],
+    'Senior':[x for x in df_table.index if x in CATEGORIES.get('Senior')],
+    'Cadet/Junior':[x for x in df_table.index if x in CATEGORIES.get('Cadet/Junior')],
+    'Minime':[x for x in df_table.index if x in CATEGORIES.get('Minime')],
+    'Benjamin':[x for x in df_table.index if x in CATEGORIES.get('Benjamin')],
+    'Pupille':[x for x in df_table.index if x in CATEGORIES.get('Pupille')],
+    'Poussin':[x for x in df_table.index if x in CATEGORIES.get('Poussin')],
+    'Petit Poussin':[x for x in df_table.index if x in CATEGORIES.get('Petit Poussin')],
+    }
 
-def make_puzzle_layout():
-    return html.Div(
+    df_categorie = df_table.loc[final_categories.get(categorie)]
+
+    columns_table=[{'name': col, 'id': col} for col in ['Classement Général', 'Pseudo','Nom du Joueur','Nombre de tournois joués','Score total' ]]
+    columns_table_famille=[{'name': col, 'id': col} for col in ['Classement', 'Nom','Score total','Membres']]
+    columns_table_categorie = [{'name': col, 'id': col} for col in ['Classement Général', 'Pseudo','Nom du Joueur','Nombre de tournois joués','Score total' ]]
+
+    return df_table.to_dict('records'), columns_table, df_famille.sort_values('Score total', ascending=False).to_dict('records'), columns_table_famille, df_categorie.to_dict('records'), columns_table_categorie
+
+
+image_directory =  os.getcwd() + '/assets/'
+logo_pdl = image_directory + 'logo_pdl.png'
+encoded_logo_pdl = base64.b64encode(open(logo_pdl, 'rb').read())
+
+team_tournament_layout = html.Div(
+    [
+        html.Div(Header(app)),
+        html.Br(),
+        html.Div(
             [
-                html.Div(Header(app)),
-                html.Br(),
                 html.Div(
-                    [
-                        html.Div(
-                            [
-                                html.Div(
-                                    [
-                                        html.H6("Date de début :"),
-                                        dcc.Dropdown(
-                                            id='date_debut',
-                                            value=date_puzzle_value_first,
-                                            clearable=False
-                                        )
-                                    ],
-                                    className='six columns'
-                                ),
-                                html.Div(
-                                    [
-                                        html.H6("Date de fin :"),
-                                        dcc.Dropdown(
-                                            id='date_fin',
-                                            value=date_puzzle_value_last,
-                                            clearable=False
-                                        )
-                                    ],
-                                    className='six columns'
-                                ),
-                            ],
-                            className='row'
-                        ),
-                        html.Br(),
-                        html.Button('Mettre à jour les données', id='update-val', n_clicks=0),
-                        html.Div(id='phrase-update'),
-                        html.Br(),
-                        html.H4("Classement du challenge puzzle", className='subtitle'),
-                        html.Div( 
-                            [
-                                dash_table.DataTable(
-                                    id='table-puzzle-challenge',
-                                    sort_action='native',
-                                    filter_action="native",
-                                    page_action="native",
-                                    page_current= 0,
-                                    page_size=25,
-                                )
-                            ],
+                [
+                    html.Img(
+                        src='data:image/png;base64,{}'.format(encoded_logo_pdl.decode()),
+                        className='logo-interclub'
+                    ),
+                    html.H6('(Logo Vincent VERHILLE)')
+                ],
+                className='three columns',
+                ),
+                html.Div([
+                    html.H6('Choisis un tournoi :'),
+                    dcc.Dropdown(
+                        id = 'dropdown-team-arena',
+                        options = team_arena_options,
+                        value=team_arena_value,
+                        clearable=False,
                         )
-                    ],
-                    className='sub_page'
-                )
+                        ],className='five columns'
+                ),
+                html.A(
+                html.Button("Télécharger les parties", id="tournament-games-lichess-button"),
+                id='tournament_team_href',
+                ),
             ],
-            className='page'
-        )
+            className="row",
+        ),
+        html.Hr(),
+        html.Div(id='classement-team'),
+        html.Div(id="classement-top-10"),
+        html.Div(id='classement-indiv')
+    ],
+    className='page'
+)
+
 
 @app.callback(
-    Output('date_fin', 'options'),
-    Input('date_debut', 'value')
+    Output('classement-team', 'children'), Output('classement-top-10', 'children'),Output('classement-indiv', 'children'),
+    Input('dropdown-team-arena', 'value')
 )
-def update_enddate_options(date_debut):
-    liste_date = [re.sub('-puzzle.csv', '', file) for file in get_list_s3_objects()]
-    possible_date = list(set([date for date in liste_date if date >= date_debut]))
-    return [{'label': dateutil.parser.parse(date).strftime("%A %d %B %Y"), 'value':date} for date in possible_date]
+def update_team_arena_result(tournoi):
+    rep = get('https://lichess.org/api/tournament/{}'.format(tournoi))
+    df = pd.json_normalize(rep.json().get('teamStanding'))
+    columns = ['Classement', 'Club', 'Score']
+    df.rename(columns={'rank':'Classement', 'score':'Score'}, inplace=True)
+    df['Club'] = df['id'].apply(lambda x:TEAMS_ID.get(str(x), "non renseigné"))
+    div_general = html.Div(
+        [
+            html.H4('Classement général de cette étape : '),
+            dash_table.DataTable(
+                id='table_tournoi',
+                data=df[columns].to_dict('records'),
+                columns=[{'name': col, 'id': col} for col in columns],
+                sort_action='native',
+                page_action="native",
+                page_current= 0,
+                page_size=20,
+                style_data_conditional=[
+                    {
+                        'if': {'row_index': 'odd'},
+                        'backgroundColor': 'rgb(248, 248, 248)'
+                    },
+                    {
+                        'if': {
+                            'filter_query': '{Club} contains "Echiquier Nazairien"',
+                        },
+                        'backgroundColor': 'yellow',
+                        'color': 'black'
+                    },
 
-@app.callback(
-    Output('date_debut', 'options'),
-    Input('date_fin', 'value')
-)
-def update_debutdate_options(date_fin):
-    liste_date = [re.sub('-puzzle.csv', '', file) for file in get_list_s3_objects()]
-    possible_date = list(set([date for date in liste_date if date <= date_fin]))
-    return [{'label': dateutil.parser.parse(date).strftime("%A %d %B %Y"), 'value':date} for date in possible_date]
+                ],
+                style_header={
+                    'backgroundColor': 'rgb(230, 230, 230)',
+                    'fontWeight': 'bold'
+                },
+            )
+        ], 
+        className='centered-table'
+    )
 
-@app.callback(
-    Output('phrase-update', 'children'),
-    [Input('update-val', 'n_clicks')],
-)
-def update_table_s3(n_clicks):
-    s3 = create_s3_object()
-    df = update_tables_club_puzzle(club)
-    now = datetime.today()
-    key = '{}-{}-{}-puzzle.csv'.format(now.year, now.month, now.day)
-    csv_buffer = StringIO()
-    df.to_csv(csv_buffer)
-    s3.Object('lichess-app-assets',key).put(Body=csv_buffer.getvalue())
-    return 'Les données ont été enregistrées le {} à {} heures {}.'.format(
-        dateutil.parser.parse(str(now)).strftime("%A %d %B %Y"),  
-        now.hour, now.minute
+    top_ten = pd.json_normalize(rep.json().get('standing').get('players'))
+    top_ten.rename(columns={'name':'Pseudo', 'sheet.total':'Score', 'rank':'Classement'}, inplace=True)
+    top_ten['Club'] = top_ten['team'].apply(lambda x:TEAMS_ID.get(str(x), "non renseigné"))
+    columns = ['Classement', 'Pseudo','Club','Score']
+    div_top_ten = html.Div(
+        [
+            html.H4('Classement individuel de cette étape : '),
+            dash_table.DataTable(
+                id='table_tournoi',
+                data=top_ten[columns].to_dict('records'),
+                columns=[{'name': col, 'id': col} for col in columns],
+                sort_action='native',
+                page_action="native",
+                page_current= 0,
+                page_size=20,
+                style_data_conditional=[
+                    {
+                        'if': {'row_index': 'odd'},
+                        'backgroundColor': 'rgb(248, 248, 248)'
+                    },
+                    {
+                        'if': {
+                            'filter_query': '{Club} contains "Echiquier Nazairien"',
+                        },
+                        'backgroundColor': 'yellow',
+                        'color': 'black'
+                    },
+                ],
+                style_header={
+                    'backgroundColor': 'rgb(230, 230, 230)',
+                    'fontWeight': 'bold'
+                },
+            )
+        ], 
+        className='centered-table'
     )
 
 
+
+    index = df[df.id == club].index[0]
+    df2 = pd.json_normalize(df.loc[index, 'players'])
+    df2['Nom'] = df2['user.id'].apply(lambda x:ID_NOM.get(str(x), "inconnu"))
+    df2.rename(columns={'user.name':'Pseudo', 'score':'Score'}, inplace=True)
+    columns = ['Score', 'Pseudo','Nom']
+    div_st_nazaire = html.Div(
+        [
+            html.H4('Meilleurs nazairiens de cette étape : '),
+            dash_table.DataTable(
+                id='table_tournoi',
+                data=df2[columns].to_dict('records'),
+                columns=[{'name': col, 'id': col} for col in columns],
+                sort_action='native',
+                page_action="native",
+                page_current= 0,
+                page_size=20,
+                style_data_conditional=[
+                    {
+                        'if': {'row_index': 'odd'},
+                        'backgroundColor': 'rgb(248, 248, 248)'
+                    }
+                ],
+                style_header={
+                    'backgroundColor': 'rgb(230, 230, 230)',
+                    'fontWeight': 'bold'
+                },
+            )
+        ], 
+        className='centered-table'
+    )
+    return div_general, div_top_ten, div_st_nazaire
+
 @app.callback(
-    [Output('table-puzzle-challenge', 'data'),
-    Output('table-puzzle-challenge', 'columns')],
-    [Input('date_debut', 'value'), Input('date_fin', 'value')]
+    [Output('tournament_team_href', 'href')],
+    [Input('dropdown-team-arena', 'value')],
 )
-def update_puzzle_challenge(date_debut, date_fin):
-    df_first = read_s3_csv_file('{}-puzzle.csv'.format(date_debut))
-    df_last = read_s3_csv_file('{}-puzzle.csv'.format(date_fin))
-    df_first[['perfs.puzzle.games', 'perfs.puzzle.rating']] = df_first[['perfs.puzzle.games', 'perfs.puzzle.rating']].astype(float)
-    df_first.set_index('username', inplace=True)
-    df_last.set_index('username', inplace=True)
-    df_last[['perfs.puzzle.games', 'perfs.puzzle.rating']] = df_last[['perfs.puzzle.games', 'perfs.puzzle.rating']].astype(float)
-    df_table = df_last[['perfs.puzzle.games', 'perfs.puzzle.rating']].subtract(df_first[['perfs.puzzle.games', 'perfs.puzzle.rating']])
-    df_table['Joueur'] = df_table.index
-    df_table.rename(columns={"perfs.puzzle.games": "Puzzles effectués", "perfs.puzzle.rating":"Diff Elo"}, inplace=True)
-    liste_df=[read_s3_csv_file(file) for file in filter_list_between_strings(date_debut, date_fin, get_list_s3_objects())]
-    rating = pd.concat(liste_df)
-    gb = rating.groupby('username')
-    rating_max = pd.DataFrame(gb['perfs.puzzle.rating'].max())
-    df_table = df_table.merge(rating_max.rename(columns={'perfs.puzzle.rating':'Elo Max'}),left_index=True, right_index=True)
-    df_table = df_table.merge(pd.DataFrame(df_last['perfs.puzzle.games']).rename(columns={'perfs.puzzle.games':'Total Puzzles'}),left_index=True, right_index=True)
-    df_table = df_table.merge(pd.DataFrame(df_last['perfs.puzzle.rating']).rename(columns={'perfs.puzzle.rating':'Elo Final'}),left_index=True, right_index=True)
-    df_table.sort_values('Elo Final', ascending=False, inplace=True)
-    data_table = df_table.to_dict('records')
-    columns_table=[{'name': col, 'id': col} for col in ["Joueur",'Total Puzzles',"Puzzles effectués",'Elo Final','Elo Max',"Diff Elo"]]
-    return data_table, columns_table
+def update_link_tournoi(id_tournoi):
+    return ["https://lichess.org/api/arena/{}/games".format(id_tournoi)]
+
+test_layout = html.Div(
+    [
+        html.Div(Header(app)),
+        html.Br(),
+        html.Div(
+            [
+                dcc.Tabs(
+                    [
+                        dcc.Tab(
+                            [
+                                html.Div(
+                                    [
+                                        html.Br(),
+                                        html.Iframe(src="https://lichess.org/tv/frame?theme=brown&bg=dark", width="400px", height= "444px")
+                                    ],
+                                ),
+                            ], label="Meilleur partie Live"
+                        ),
+                        dcc.Tab(
+                            [
+                                html.Div(
+                                    [
+                                        html.Br(),
+                                        html.Iframe(src="https://lichess.org/training/frame?theme=brown&bg=dark", width="400px", height= "444px")
+                                    ],
+                                ),
+                            ], label="Pratique en tactique !"
+                        ),
+                        dcc.Tab(
+                            [
+                                html.Div(
+                                    [
+                                        html.Br(),
+                                        html.Iframe(src="https://lichess.org/embed/JwB4U3zj#33?theme=auto&bg=auto", width=600, height=397)
+                                    ],
+                                ),
+                            ], label = "Masterpiece de Quentin Deschamps (c'est faux)"
+                        ),
+                    ])
+        ])
+    ],
+    className='page'
+)
+
 
 
 # Update page
 @app.callback(Output("page-content", "children"), [Input("url", "pathname")])
 def display_page(pathname):
-    if pathname == "/dash-echiquier-nazairien/individual-results":
+    if pathname == "/echiquier-nazairien/individual-results":
         return individual_layout
-    elif pathname == "/dash-echiquier-nazairien/puzzle-results":
-        return make_puzzle_layout()
-    elif pathname == "/dash-echiquier-nazairien/tournament-results":
+    elif pathname == "/echiquier-nazairien/tournament-results":
         return tournament_layout
-    elif pathname == "/dash-echiquier-nazairien/tournament-general-results":
-        return tournament_general_layout    
-    elif pathname == "/dash-echiquier-nazairien/full-view":
+    elif pathname == "/echiquier-nazairien/tournament-swiss-results":
+        return tournament_general_layout
+    elif pathname == "/echiquier-nazairien/tournament-team-results":
+        return team_tournament_layout
+    elif pathname == "/echiquier-nazairien/test":
+        return test_layout
+    elif pathname == "/echiquier-nazairien/full-view":
         return (
             overview_layout,
             individual_layout,
             tournament_layout,
             tournament_general_layout,
-            make_puzzle_layout(),
+            team_tournament_layout
         )
     else:
         return overview_layout

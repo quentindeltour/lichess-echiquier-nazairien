@@ -16,13 +16,13 @@ The app produces general descritpion of the club in the `homepage`.
 Then you can go to other pages to get : 
 
 - Information about one player in the `Resultats individuels` page;
-![Individual results](images/app_indiv.png)
+![Individual results](images/app_indiv_results.png)
 
 - Results of tournaments taken one by one in the `Resultats des tournois` page;
-![Tournament results](images/app_tournament.png)
+![Tournament results](images/app_tournament_results.png)
 
 - Result of all the tournament (overall ranking) in the `Classement général` page;
-![Overall Ranking](images/app_overall.png)
+![Overall Ranking](images/app_overall_ranking.png)
 
 - The last page `Puzzle Challenge` is dedicated to puzzle, which are a way to train tactics on Lichess. This one is linked to an AWS S3 container which stocks the data everyday, as the Lichess API does not give over time evolution of number of puzzle played. 
-![Puzzle Challenge](images/app_challenge.png)
+![Puzzle Challenge](images/app_puzzle_challenge.png)
